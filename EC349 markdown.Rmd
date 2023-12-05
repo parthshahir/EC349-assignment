@@ -1,0 +1,350 @@
+---
+title: How can machine learning models accurately predict Yelp user ratings for businesses
+  based on diverse variables available within the platform?
+author: "Parth Shahir"
+date: "2023-12-05"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+Tabula statement
+
+We're part of an academic community at Warwick.
+
+Whether studying, teaching, or researching, we’re all taking part in an expert conversation which must meet standards of academic integrity. When we all meet these standards, we can take pride in our own academic achievements, as individuals and as an academic community.
+
+Academic integrity means committing to honesty in academic work, giving credit where we've used others' ideas and being proud of our own achievements.
+
+In submitting my work I confirm that:
+
+1. I have read the guidance on academic integrity provided in the Student Handbook and understand the University regulations in relation to Academic Integrity. I am aware of the potential consequences of Academic Misconduct.
+
+2. I declare that the work is all my own, except where I have stated otherwise.
+
+3. No substantial part(s) of the work submitted here has also been submitted by me in other credit bearing assessments courses of study (other than in certain cases of a resubmission of a piece of work), and I acknowledge that if this has been done this may lead to an appropriate sanction.
+
+4. Where a generative Artificial Intelligence such as ChatGPT has been used I confirm I have abided by both the University guidance and specific requirements as set out in the Student Handbook and the Assessment brief. I have clearly acknowledged the use of any generative Artificial Intelligence in my submission, my reasoning for using it and which generative AI (or AIs) I have used. Except where indicated the work is otherwise entirely my own.
+
+5. I understand that should this piece of work raise concerns requiring investigation in relation to any of points above, it is possible that other work I have submitted for assessment will be checked, even if marks (provisional or confirmed) have been published.
+
+6. Where a proof-reader, paid or unpaid was used, I confirm that the proofreader was made aware of and has complied with the University’s proofreading policy.
+
+7. I consent that my work may be submitted to Turnitin or other analytical technology. I understand the use of this service (or similar), along with other methods of maintaining the integrity of the academic process, will help the University uphold academic standards and assessment fairness.
+
+Privacy statement
+
+The data on this form relates to your submission of coursework. The date and time of your submission, your identity, and the work you have submitted will be stored. We will only use this data to administer and record your coursework submission.
+
+Related articles
+
+Reg. 11 Academic Integrity (from 4 Oct 2021)
+
+Guidance on Regulation 11
+
+Proofreading Policy  
+
+Education Policy and Quality Team
+
+Academic Integrity (warwick.ac.uk)
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages, echo=FALSE, include=FALSE}
+#Clear
+cat("\014")  
+rm(list=ls())
+
+#install and load packages for this assignment, however installing does not work.
+#install.packages("jsonlite")
+#install.packages("tidyverse")
+#install.packages("SentimentAnalysis")
+#install.packages("SnowballC")
+#install.packages("glmnet")
+#install.packages("caret")
+#install.packages("elasticnet")
+#install.packages("tree")
+#install.packages("rpart.plot")
+#install.packages("rpart")
+#install.packages("randomForest")
+#install.packages("adabag")
+#install.packages("foreach")
+#install.packages("htmltools")
+#install.packages("ggcorrplot")
+#install.packages("glue")
+#install.packages("corrplot")
+#install.packages("MASS")
+library(jsonlite)
+library(tidyverse)
+library(SentimentAnalysis)
+library(SnowballC)
+library(glmnet)
+library(caret)
+library(elasticnet)
+library(tree)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(foreach)
+library(htmltools)
+library(adabag)
+library(ggcorrplot)
+library(corrplot)
+library(glue)
+library(MASS)
+
+#Set Directory 
+setwd("C:/Users/Parth/Documents/Y3/EC349/Assignment")
+
+#Load All the data # Note: this next section takes a while to run, so to save time I skipped to (*)
+business_data <- stream_in(file("yelp_academic_dataset_business.json")) #note that stream_in reads the json lines (as the files are json lines, not json)
+review_data  <- load(file = "yelp_review_small.Rda") #note that stream_in reads the json lines (as the files are json lines, not json)
+checkin_data  <- stream_in(file("yelp_academic_dataset_checkin.json")) #note that stream_in reads the json lines (as the files are json lines, not json)
+user_data <- load(file = "yelp_user_small.Rda") #note that stream_in reads the json lines (as the files are json lines, not json)
+tip_data  <- stream_in(file("yelp_academic_dataset_tip.json")) #note that stream_in reads the json lines (as the files are json lines, not json)
+
+#Merge all the data sets
+
+checkin_data<-checkin_data %>% 
+  #mutate(visits=str_count(date, ",")) %>% 
+  #select(-date) # this just takes the number of visits out from the check-in data
+
+all_data <- review_data_small %>% 
+ left_join(business_data, suffix = c(".review", ".business"), by=c("business_id")) %>% 
+ left_join(user_data_small, suffix = c(".review", ".user"), by=c("user_id")) %>% 
+ left_join(checkin_data)
+
+#Sentiment Analysis
+# NB: The sentiment analysis in this took a while to run,
+# so I saved the data and loaded it separately later.
+all_data<- all_data %>%
+  rename(review_text = text) %>% 
+  select(-date) %>% 
+  left_join(tip_data, multiple = "last") %>% 
+  select(-date) %>% 
+  left_join(checkin_data) %>% 
+  mutate(mood_review=analyzeSentiment(review_text)$SentimentQDAP) %>% 
+  mutate(mood_tip=analyzeSentiment(text)$SentimentQDAP) %>% 
+  mutate(mood_tip=case_when(is.nan(mood_tip) ~ 0, TRUE ~ mood_tip)) %>% 
+  mutate(mood_review=case_when(is.nan(mood_review) ~ 0, TRUE ~ mood_review)) %>% 
+  mutate(mood_review_direction=convertToDirection(mood_review)) %>% 
+  mutate(mood_tip_direction=convertToDirection(mood_tip))
+
+save(all_data, file="sentiment_data.Rda")
+
+#(*)
+#load the new merged data set, with sentiment analysis. onedrive link: https://1drv.ms/f/s!ArN2Uvs4jw4YkR7JLoF63DcrSZTU
+load(file = "sentiment_data.Rda")
+
+all_data <- all_data %>%
+    unnest(attributes) #unnest all the attributes
+
+```
+### **Introduction**
+In today’s digital era, consumer decision-marking heavily relies on online feedback. The internet serves as an extensive repository of people’s opinions, offering millions of reviews covering various products and services. Chevalier and Mayzlin (2006) demonstrate the significant impact of ratings on consumer behaviour, directly influencing product success or failure. Platforms like Yelp, TripAdvisor and Google act as hubs for this expansive review data. From a business perspective, accurate prediction can assist them in understanding customer sentiment and improving their services. This paper aims to develop a machine learning-based predictive model to forecast user ratings for businesses. The primary goals are to predict user ratings, offer actionable insights for enhancing customer satisfaction, and investigate whether sentiment analysis of Yelp reviews can predict user-assigned star ratings.
+
+
+This study follows the structured and adaptable CRISP-DM methodology, chosen for its intuitive steps and iterative nature applicable across diverse settings. While CRISP-DM may not align perfectly with modern big data projects and could potentially overlook stakeholder involvement, these concerns are deemed less relevant in this specific context and can effectively be managed.
+
+
+This paper adopts the CRISP-DM methodology in the following manner: it begins by addressing problem understanding and research objectives. Subsequently, it covers sections such as 'Data Understanding & Preparation,' focusing on preparing the Yelp dataset for analysis. Then, 'Modelling' explains the rationale behind selecting a Random Forest model and outlines its assumptions. 'Evaluation' critically assesses results and provides insights. Notably, the deployment phase is omitted as it is deemed irrelevant within the context of this specific problem.
+
+
+
+### **Data Understanding and Preparation**
+
+This study leverages the Yelp Open Dataset, encompassing more than 150,000 businesses and nearly 7,000,000 reviews. Due to computational limitations, a random sample of approximately 1,400,000 observations is used in this paper. The dataset comprises various components: user reviews in text format, corresponding star ratings, and business details such as WiFi availability, parking facilities, and music offerings. The primary focus rests on the dependent variable, "stars.review". Table 1. shows full details of all the variables used.
+
+
+Existing literature sparsely explores the theory behind consumer review determinants, mainly concentrating on reviews’ impact on consumers and business performance. Chen et al. (2008) finds some evidence that a user’s propensity for altruism predicts their likelihood of rating movies that have few existing ratings, while Wang (2010) finds that a strong sense of social identity considerably increases the quantity and quality of ratings. These papers motivate the use of the variables “average_stars”, “review.count_user”, “review_count.review” and “fans” .
+
+
+Studies in the Yelp domain highlight the importance of geographical location ("postal_code" and "state") in rating prediction (Mathieu et al., 2016; Sunil et al., 2017). Text analysis significance is emphasized in various papers (Tang et al., 2015; Ngo-Ye, Sinha, & Sen, 2017), motivating its inclusion in this study. However, due to missing values, specific business attributes are excluded, avoiding substantial observation loss. Furthermore, a correlation matrix (Figure 1.) was computed to aid variable selection. The examination of this matrix reaffirms some of the previously justified variables and introduces the inclusion of three more variables, detailed in Table 1. below. 
+
+
+Merging the five datasets relied on matching business and user IDs, followed by sentiment analysis on reviews using the "SentimentAnalysis" package in R, which produced two more variables for analysis. Any missing values were dropped. These modifications reduced the dataset to roughly 280,000 observations. Model evaluation involved splitting the dataset into training (90%) and test (10%) subsets, also exploring alternative splits to ensure robustness.
+
+### **Figure 1.**
+```{r correlation matrix, echo=FALSE, warning=FALSE}
+corrplot<-all_data %>% 
+  select_if(is.numeric)
+corrplot<-corrplot[complete.cases(corrplot),]
+corrplot <- cor(corrplot)
+ggcorrplot(corrplot, hc.order = TRUE, type = "lower", tl.cex=4)
+
+```
+
+### **Table 1.**
+Results | Variable |  Description  
+ :- | :---------: | :-------------:
+1. | *stars.review* | (Dependent Variable) - Categorical variable, taking values 1-5, of the number of stars given by a user to business 
+2. | *stars.business* | Categorical variable, taking values 1-5, of the average number of stars given to a business 
+3. | *review_count.user*| Continuous variable of the total number of reviews by a user  
+4. | *average stars* | Continuous variable of the average number of stars given by a user 
+5. | *review_count.review* | Continuous variable of the total number of reviews given to business 
+6. | *fans* | Continuous variable of the total number of followers/fans that a use has 
+7. | *postal_code* | A categorial variable measuring the postal code of the business 
+8. | *state* | A categorical variable measuring the State the business is located in 
+9. | *is_open* | A binary variable, taking 1 if the business is open, 0 if closed 
+10.| *cool.review* | A continuous variable measuring how many reviews by a given user are deemed as "cool" by other users 
+11.| *mood.review* | A continuous variable, taking values -1 (negative) to 1 (positive), measuring the overall direction of the sentiment of a review 
+12.| *mood.tip* | A continuous variable, taking values -1 (negative) to 1 (positive), measuring the overall direction of the sentiment of a tip
+ 
+
+```{r methodology, echo=FALSE, warning=FALSE}
+all_data <- all_data %>% 
+    mutate(stars.review = factor(stars.review)) #make out dependent variable a factor variable
+
+all_data <- all_data %>% 
+  mutate(state = factor(state)) #make state a factor variable
+
+
+all_data <- all_data[complete.cases(all_data[,75]),] #drop all observations where average_stars (average user reviews) is NA
+
+
+#Split data into training and test
+#10/90 split
+set.seed(1)
+percentage_sampled = 0.1    
+trainIndex <- createDataPartition(all_data$stars.review, p = percentage_sampled, list = 0)
+test1 = all_data[ trainIndex,] #test is the 10%
+train1 = all_data[ -trainIndex,]
+
+#20/80 split
+
+percentage_sampled = 0.2   
+trainIndex <- createDataPartition(all_data$stars.review, p = percentage_sampled, list = 0)
+test2 = all_data[ trainIndex,] #test is the 20%
+train2 = all_data[ -trainIndex,]
+
+#30/70 split
+
+percentage_sampled = 0.3  
+trainIndex <- createDataPartition(all_data$stars.review, p = percentage_sampled, list = 0)
+test3 = all_data[ trainIndex,] #test is the 30%
+train3 = all_data[ -trainIndex,]
+
+#40/60 split
+
+percentage_sampled = 0.4   
+trainIndex <- createDataPartition(all_data$stars.review, p = percentage_sampled, list = 0)
+test4 = all_data[ trainIndex,] #test is the 40%
+train4 = all_data[ -trainIndex,]
+```
+
+### **Methodology**
+
+This paper employs a Random Forest model to predict user ratings; Random Forest is a machine learning method that uses multiple bagged decision trees, and overcomes the issue of potentially correlated trees by randomising the subsets of covariates used for splitting the trees. The categorical nature of the dependent variable, suggests a classification model is more suitable; furthermore, this paper is primarily concerned with predicting user ratings, rather than identifying specific causal effects. Yelp star ratings might not have a linear relationship with the various features influencing user ratings: in this capacity, Random Forests excel in capturing complex, non-linear relationships, allowing for more accurate predictions. Moreover, Random Forests are generally less prone to overfitting and are better at generalising more noisy data, making it a more reliable model for predicting Yelp star ratings. Compared to more flexible models, Random Forests offer some degree of interpretability, by providing insights into feature importance, which will be utilised in this paper.
+
+### **Evaluation**
+
+This paper uses prediction accuracy as its main evaluation metric, since the primary goal is the accurately predict user ratings. Table 2. shows how the model performs in the training and test data in the different training/test splits. The 20/80 split had the most similar prediction accuracies, suggesting that the other splits were training the model too much or too little, leading to overfitting/underfitting.
+
+### **Figure 2.**
+```{r Results, echo=FALSE, warning=FALSE}
+##RANDOM FOREST 
+#results for 10/90 split
+
+
+RF<-randomForest(stars.review ~ stars.business + review_count.review 
+                                    + average_stars + postal_code + review_count.user 
+                                    + is_open + mood_review + mood_tip + cool.review + fans + state, 
+                                    data=train1, method = class, ntree=100, nodesize = 100, cp = 0.001)
+
+pred_RF_train = predict(RF, train1)
+#confusionMatrix(pred_RF_train, train1$stars.review) #these are commented out since I dont want them to print out
+
+
+pred_RF_test = predict(RF, test1)
+#confusionMatrix(pred_RF_test, test1$stars.review)
+
+#results for 20/80 split
+
+
+RF<-randomForest(stars.review ~ stars.business + review_count.review 
+                 + average_stars + postal_code + review_count.user 
+                 + is_open + mood_review + mood_tip + cool.review + fans + state, 
+                 data=train1, method = class, ntree=100, nodesize = 100, cp = 0.001)
+
+pred_RF_train = predict(RF, train2)
+#confusionMatrix(pred_RF_train, train2$stars.review)
+
+
+pred_RF_test = predict(RF, test2)
+#confusionMatrix(pred_RF_test, test2$stars.review)
+varImpPlot(RF)
+
+#results for 30/70 split
+
+RF<-randomForest(stars.review ~ stars.business + review_count.review 
+                 + average_stars + postal_code + review_count.user 
+                 + is_open + mood_review + mood_tip + cool.review + fans + state, 
+                 data=train3, method = class, ntree=100, nodesize = 100, cp = 0.001)
+
+pred_RF_train = predict(RF, train3)
+#confusionMatrix(pred_RF_train, train3$stars.review)
+
+
+pred_RF_test = predict(RF, test3)
+#confusionMatrix(pred_RF_test, test3$stars.review)
+
+
+#results for 40/60 split
+
+
+RF<-randomForest(stars.review ~ stars.business + review_count.review 
+                 + average_stars + postal_code + review_count.user 
+                 + is_open + mood_review + mood_tip + cool.review + fans + state, 
+                 data=train4, method = class, ntree=100, nodesize = 100, cp = 0.001)
+
+pred_RF_train = predict(RF, train4)
+#confusionMatrix(pred_RF_train, train4$stars.review)
+
+
+pred_RF_test = predict(RF, test4)
+#confusionMatrix(pred_RF_test, test4$stars.review)
+
+```
+
+### **Table 2.**
+Results  | Testing Data | Training Data
+:------------- |:-------------: |  -------------:
+10/90  | 0.6081 | 0.6547
+20/80  | 0.6455 | 0.6499
+30/70  | 0.611 | 0.6153
+40/60  | 0.611 | 0.6497
+
+The Random Forest Model consistently produced a prediction accuracy of about 60%, which is better than an OLS model and a Logit model. This is a testimony to the advantages of Random Forest models when it comes to prediction complex non-linear relationships. However, at the same time one would hope that by sacrificing the interpretability of the model, a higher predictability would be achieved. Furthermore, Figure 2. shows a plot of feature importance offering some interpretability of what variables are most important for prediction. The sentiment analysis worked well showing high explanatory power. However, one criticism is the relevancy for business. In order to produce results that businesses can act upon it would be more useful to use variables such as business attributes, which are in the control of the business. Also, a more restrictive model like a Logistic Regression offers more interpretability, as one could look at the marginal effects and provide an insight such as, having WiFi increases the probability of having a higher star-rating. Finally, the results suggests that overfitting was overcome by finetuning the parameters chosen, as the difference between the training and tests accuracy was reduced.
+
+
+### **Challenges and Solutions**
+
+The main challenge encountered involved the potential overfitting of the model. The model started producing a much higher prediction accuracy in the training set than in the testing set – which suggested that the Random Forest model was learning from the training set too well, and was capturing too much noise: evidence of overfitting. To counteract this, I would have like to use a random search, however computational constraints did not allow for this. I resorted to trying different hyperparameters within defined ranges, until I settled on the ones that gave me desirable results. Also, I used different sizes of training and testing sets to find out what split was optimal for reducing overfitting and to check the robustness of my model.
+
+### **Conclusion**
+
+The Random Forest model showcased strong predictive predictabilities for user review ratings, outperforming a Logistic Regression in capturing complex relationships, and Sentiment Analysis proved to be useful in prediction. However, there is room for improvement, on two main fronts. Firstly, to improve predictability, a random search method may be employed to fine tune the parameters, or a more flexible method may be considered, such as boosting/deep learning. For interpretability, which is more relevant for businesses, a more restrictive model might be considered. For example a Ordered Logistic Regression, with business attributes as predictors, could have useful implications for businesses so that they could potentially increase their ratings.
+
+
+### **References**
+
+Chen, Y. et al. (2010) ‘Social Comparisons and Contributions to Online Communities: A Field Experiment on MovieLens’, American Economic Review, 100(4), pp. 1358–1398.
+Chevalier, J.A. and Mayzlin, D. (2006) ‘The Effect of Word of Mouth on Sales: Online Book Reviews’, Journal of Marketing Research, 43(3), pp. 345–354. Available at: https://doi.org/10.1509/jmkr.43.3.345.
+
+
+Ngo-Ye, T.L., Sinha, A.P. and Sen, A. (2017) ‘Predicting the helpfulness of online reviews using a scripts-enriched text regression model’, Expert Systems with Applications: An International Journal, 71(C), pp. 98–110. Available at: https://doi.org/10.1016/j.eswa.2016.11.029.
+
+
+Passerini, G. et al. (2016) Uncovering Business Opportunities from Yelp and Open Street Map Data. Available at: https://doi.org/10.13140/RG.2.1.4898.6002.
+Sunil, G. and Bari, A.K. (2017) ‘Prediction of Rating by Using Users’ Geographical Social Factors’, in. Available at: https://www.semanticscholar.org/paper/Prediction-of-Rating-by-Using-Users%E2%80%99-Geographical-Sunil-Bari/4628df8b7db9a6ad43ed08020e8614a70236f36a (Accessed: 4 December 2023).
+
+
+Tang, D. et al. (2015) ‘User Modeling with Neural Network for Review Rating Prediction’, in. International Joint Conference on Artificial Intelligence. Available at: https://www.semanticscholar.org/paper/User-Modeling-with-Neural-Network-for-Review-Rating-Tang-Qin/3eb7747d2c9358ea2c8b3a493bef87b089e2831c (Accessed: 4 December 2023).
+
+
+Zhongmin, W. (2010) ‘Anonymity, Social Image, and the Competition for Volunteers: A Case Study of the Online Market for Reviews’, The B.E. Journal of Economic Analysis & Policy, 10(1), pp. 1–35.
+
+
+
